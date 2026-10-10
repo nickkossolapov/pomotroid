@@ -1,5 +1,31 @@
 ## ADDED Requirements
 
+### Requirement: Hide During Work setting
+
+The system SHALL persist `auto_hide_during_work` as a boolean, defaulting to
+`false`, and expose it in Settings → System → System Tray when Show in System
+Tray is enabled. The toggle SHALL be available on supported desktop platforms,
+including macOS. Enabling it SHALL require a successfully shown tray icon.
+
+#### Scenario: Enabling while work is running
+
+- **WHEN** the setting is enabled during a running work round
+- **THEN** the main timer window SHALL hide to the tray immediately
+- **AND** settings and statistics windows SHALL remain unaffected
+
+#### Scenario: Disabling the setting or the tray
+
+- **WHEN** Hide During Work is disabled, Show in System Tray is disabled, or all settings are reset
+- **THEN** a window hidden by this feature SHALL be restored and focused at its previous size
+- **AND** disabling Show in System Tray SHALL also persist Hide During Work as `false`
+- **AND** any tray removal SHALL occur only after successful restoration
+
+#### Scenario: Existing users upgrade
+
+- **WHEN** an existing installation upgrades
+- **THEN** migration 7 SHALL seed the new setting as `false` without overwriting an existing value
+- **AND** the setting SHALL persist across restarts and reset to `false` with Reset All Settings
+
 ### Requirement: Verbose Logging setting persisted and applied on startup
 
 The system SHALL store a `verbose_logging` boolean setting (DB key: `verbose_logging`, default `false`) in SQLite. On startup the log level SHALL be set to DEBUG when `verbose_logging` is `true`, and INFO otherwise, before any other application setup runs.

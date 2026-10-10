@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "休憩中は常に前面に表示を無効にします。",
   "system_group_tray": "システムトレイ",
   "system_toggle_show_tray": "システムトレイに表示",
+  "system_toggle_auto_hide_work": "作業中は非表示",
+  "system_toggle_auto_hide_work_desc": "作業タイマーの実行中はトレイに隠します。一時停止、リセット、終了時にウィンドウを再表示します。",
   "system_toggle_show_tray_desc": "システムトレイに常時アイコンを表示します。",
   "system_tray_gnome_hint": "GNOMEでは、トレイアイコンにAppIndicator拡張機能が必要です。パッケージマネージャー（例：gnome-shell-extension-appindicator）またはextensions.gnome.orgからインストールし、ログアウト後に再ログインしてください。",
   "system_toggle_min_tray": "トレイに最小化",

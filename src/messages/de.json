@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "Immer im Vordergrund während einer Pause deaktivieren.",
   "system_group_tray": "Systemablage",
   "system_toggle_show_tray": "Im Systembereich anzeigen",
+  "system_toggle_auto_hide_work": "Während der Arbeit ausblenden",
+  "system_toggle_auto_hide_work_desc": "Während der Arbeitszeit in die Ablage ausblenden. Bei Pause, Zurücksetzen oder Ende das Fenster wieder anzeigen.",
   "system_toggle_show_tray_desc": "Zeigt ein dauerhaftes Symbol im Systembereich an.",
   "system_tray_gnome_hint": "Unter GNOME benötigen Tray-Icons die AppIndicator-Erweiterung. Installiere sie über deinen Paketmanager (z. B. gnome-shell-extension-appindicator) oder von extensions.gnome.org, dann ab- und wieder anmelden.",
   "system_toggle_min_tray": "In Ablage minimieren",

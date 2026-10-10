@@ -85,6 +85,14 @@ pub fn settings_set(
     log::debug!("[settings] set {key}={value}");
     let new_settings = {
         let conn = db.lock().map_err(|e| e.to_string())?;
+        if key == "auto_hide_during_work" && value == "true" {
+            let current = settings::load(&conn).map_err(|e| e.to_string())?;
+            if !current.tray_icon_enabled || !tray_state.is_available() {
+                let message = "Enable an available system tray icon before enabling Hide During Work";
+                log::warn!("[settings] {message}");
+                return Err(message.to_string());
+            }
+        }
         settings::save_setting(&conn, &key, &value).map_err(|e| {
             log::error!("[settings] failed to save '{key}': {e}");
             e.to_string()
@@ -95,6 +103,7 @@ pub fn settings_set(
         if key == "tray_icon_enabled" && value == "false" {
             settings::save_setting(&conn, "min_to_tray", "false").map_err(|e| e.to_string())?;
             settings::save_setting(&conn, "min_to_tray_on_close", "false").map_err(|e| e.to_string())?;
+            settings::save_setting(&conn, "auto_hide_during_work", "false").map_err(|e| e.to_string())?;
         }
         settings::load(&conn).map_err(|e| {
             log::error!("[settings] failed to reload after save: {e}");
@@ -190,7 +199,7 @@ pub fn settings_set(
             #[cfg(not(target_os = "linux"))]
             tray::create_tray(&app, &tray_state);
         } else {
-            tray::destroy_tray(&tray_state);
+            timer.remove_tray();
         }
     }
 
@@ -264,7 +273,7 @@ pub fn settings_reset_defaults(
 
     // After reset, defaults have tray_icon_enabled=false and min_to_tray=false,
     // so destroy any active tray icon.
-    tray::destroy_tray(&tray_state);
+    timer.remove_tray();
 
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
@@ -390,8 +399,7 @@ pub fn window_set_visibility(visible: bool, app: AppHandle) -> Result<(), String
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
     if visible {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        tray::restore_main_window(&app)?;
     } else {
         window.hide().map_err(|e| e.to_string())?;
     }
@@ -787,4 +795,3 @@ mod tests {
         assert_eq!(n, 0);
     }
 }
-

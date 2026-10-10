@@ -19,6 +19,7 @@ pub struct Settings {
     pub tray_icon_enabled: bool,
     pub min_to_tray: bool,
     pub min_to_tray_on_close: bool,
+    pub auto_hide_during_work: bool,
     pub notifications_enabled: bool,
     /// Number of work rounds before a long break.
     pub long_break_interval: u32,
@@ -77,6 +78,7 @@ impl Default for Settings {
             tray_icon_enabled: false,
             min_to_tray: false,
             min_to_tray_on_close: false,
+            auto_hide_during_work: false,
             notifications_enabled: false,
             long_break_interval: 4,
             short_breaks_enabled: true,
@@ -186,6 +188,7 @@ pub fn load(conn: &Connection) -> Result<Settings> {
         tray_icon_enabled: parse_bool(&map, "tray_icon_enabled", d.tray_icon_enabled),
         min_to_tray: parse_bool(&map, "min_to_tray", d.min_to_tray),
         min_to_tray_on_close: parse_bool(&map, "min_to_tray_on_close", d.min_to_tray_on_close),
+        auto_hide_during_work: parse_bool(&map, "auto_hide_during_work", d.auto_hide_during_work),
         notifications_enabled: parse_bool(&map, "notifications", d.notifications_enabled),
         long_break_interval: parse_u32(&map, "work_rounds", d.long_break_interval),
         short_breaks_enabled: parse_bool(&map, "short_breaks_enabled", d.short_breaks_enabled),
@@ -342,6 +345,7 @@ mod tests {
         assert_eq!(s.theme_dark, "Pomotroid");
         assert_eq!(s.language, "auto");
         assert!(!s.verbose_logging);
+        assert!(!s.auto_hide_during_work);
     }
 
     #[test]
@@ -362,6 +366,15 @@ mod tests {
         save_setting(&conn, "always_on_top", "true").unwrap();
         let s = load(&conn).unwrap();
         assert!(s.always_on_top);
+    }
+
+    #[test]
+    fn auto_hide_during_work_round_trip() {
+        let conn = setup();
+        seed_defaults(&conn).unwrap();
+        save_setting(&conn, "auto_hide_during_work", "true").unwrap();
+        seed_defaults(&conn).unwrap();
+        assert!(load(&conn).unwrap().auto_hide_during_work);
     }
 
     #[test]
@@ -410,6 +423,7 @@ mod tests {
         save_setting(&conn, "always_on_top", "true").unwrap();
 
         // Simulate the reset_defaults command: wipe all rows then re-seed.
+        save_setting(&conn, "auto_hide_during_work", "true").unwrap();
         conn.execute("DELETE FROM settings", []).unwrap();
         seed_defaults(&conn).unwrap();
 
@@ -420,6 +434,7 @@ mod tests {
         assert_eq!(s.long_break_interval, 4, "work rounds must reset to 4");
         // Non-timer settings are also wiped and reseeded to their defaults.
         assert!(!s.always_on_top, "always_on_top must reset to default false");
+        assert!(!s.auto_hide_during_work);
     }
 
     #[test]

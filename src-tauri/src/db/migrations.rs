@@ -90,6 +90,11 @@ const MIGRATION_6: &str = "
     INSERT INTO schema_version VALUES (6);
 ";
 
+const MIGRATION_7: &str = "
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_hide_during_work', 'false');
+    INSERT INTO schema_version VALUES (7);
+";
+
 /// Apply any pending migrations. Each migration is wrapped in a transaction
 /// so a partial failure leaves the database unchanged.
 pub fn run(conn: &Connection) -> Result<()> {
@@ -131,6 +136,12 @@ pub fn run(conn: &Connection) -> Result<()> {
         log::info!("[db/migrations] MIGRATION_6 complete");
     }
 
+    if version < 7 {
+        log::info!("[db/migrations] applying MIGRATION_7: seed auto-hide during work");
+        conn.execute_batch(&format!("BEGIN; {MIGRATION_7} COMMIT;"))?;
+        log::info!("[db/migrations] MIGRATION_7 complete");
+    }
+
     Ok(())
 }
 
@@ -166,7 +177,28 @@ mod tests {
         let v: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 6);
+        assert_eq!(v, 7);
+    }
+
+    #[test]
+    fn auto_hide_upgrade_preserves_existing_preferences() {
+        for existing in [None, Some("true")] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch(MIGRATION_1).unwrap();
+            conn.execute("INSERT INTO schema_version VALUES (6)", []).unwrap();
+            if let Some(value) = existing {
+                conn.execute(
+                    "INSERT INTO settings VALUES ('auto_hide_during_work', ?1)",
+                    [value],
+                ).unwrap();
+            }
+            run(&conn).unwrap();
+            let value: String = conn.query_row(
+                "SELECT value FROM settings WHERE key = 'auto_hide_during_work'",
+                [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(value, existing.unwrap_or("false"));
+        }
     }
 
     #[test]

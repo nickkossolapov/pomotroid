@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "Disable always-on-top while a break is running.",
   "system_group_tray": "System Tray",
   "system_toggle_show_tray": "Show in System Tray",
+  "system_toggle_auto_hide_work": "Hide During Work",
+  "system_toggle_auto_hide_work_desc": "Hide to the tray while the work timer runs. Restore the window when paused, reset, or finished.",
   "system_toggle_show_tray_desc": "Display a persistent icon in the system tray.",
   "system_tray_gnome_hint": "On GNOME, tray icons require the AppIndicator extension. Install it with your package manager (e.g. gnome-shell-extension-appindicator) or from extensions.gnome.org, then log out and back in.",
   "system_toggle_min_tray": "Minimize to Tray",

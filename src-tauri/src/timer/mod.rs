@@ -1,5 +1,6 @@
 pub mod engine;
 pub mod sequence;
+mod work_window;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,6 +16,7 @@ use crate::websocket::{self, WsState};
 
 use engine::{EngineHandle, TimerCommand, TimerEvent};
 use sequence::{RoundType, SequenceState};
+use work_window::WorkWindow;
 
 // ---------------------------------------------------------------------------
 // Snapshot — serialized to JSON for the frontend
@@ -61,6 +63,7 @@ pub struct TimerController {
     /// Kept alive so TrayState is not dropped if lib.rs forgets its copy.
     #[allow(dead_code)]
     tray: Arc<TrayState>,
+    work_window: WorkWindow,
 }
 
 impl TimerController {
@@ -79,6 +82,11 @@ impl TimerController {
 
         let sequence = Arc::new(Mutex::new(seq));
         let settings_arc = Arc::new(Mutex::new(settings));
+        let work_window = WorkWindow::new(
+            app.clone(),
+            Arc::clone(&settings_arc),
+            Arc::clone(&tray),
+        );
         let shared = Arc::new(Mutex::new(TimerShared {
             elapsed_secs: 0,
             is_running: false,
@@ -90,6 +98,7 @@ impl TimerController {
         let shared_thread = Arc::clone(&shared);
         let engine_thread = engine.clone();
         let tray_thread = Arc::clone(&tray);
+        let window_thread = work_window.clone();
 
         std::thread::Builder::new()
             .name("timer-events".to_string())
@@ -104,6 +113,7 @@ impl TimerController {
                         engine: engine_thread,
                         tray: tray_thread,
                         db,
+                        work_window: window_thread,
                     },
                 );
             })
@@ -115,6 +125,7 @@ impl TimerController {
             settings: settings_arc,
             shared,
             tray,
+            work_window,
         }
     }
 
@@ -208,13 +219,27 @@ impl TimerController {
         // Sync work_rounds_total so the round counter and advance() logic both
         // reflect the new long_break_interval immediately.
         self.sequence.lock().unwrap().work_rounds_total = new.long_break_interval;
-        *self.settings.lock().unwrap() = new;
+        let window_setting_changed = {
+            let mut settings = self.settings.lock().unwrap();
+            let changed = settings.auto_hide_during_work != new.auto_hide_during_work
+                || settings.tray_icon_enabled != new.tray_icon_enabled;
+            *settings = new;
+            changed
+        };
         let s = self.shared.lock().unwrap();
         let is_idle = !s.is_running && s.elapsed_secs == 0;
         drop(s);
         if is_idle {
             self.reconfigure();
         }
+        if window_setting_changed {
+            let snapshot = self.get_snapshot();
+            self.work_window.set_running(snapshot.is_running && snapshot.round_type == "work");
+        }
+    }
+
+    pub fn remove_tray(&self) {
+        self.work_window.remove_tray();
     }
 }
 
@@ -229,6 +254,7 @@ struct ListenContext {
     engine: EngineHandle,
     tray: Arc<TrayState>,
     db: DbState,
+    work_window: WorkWindow,
 }
 
 fn listen_events(
@@ -236,7 +262,7 @@ fn listen_events(
     event_rx: std::sync::mpsc::Receiver<TimerEvent>,
     ctx: ListenContext,
 ) {
-    let ListenContext { sequence, settings, shared, engine, tray, db } = ctx;
+    let ListenContext { sequence, settings, shared, engine, tray, db, work_window } = ctx;
     // Track last tray progress to throttle redraws to ≥ 1% delta.
     let mut last_tray_progress: f32 = -1.0;
     // Active session row ID for recording (None = not started yet).
@@ -252,6 +278,7 @@ fn listen_events(
                     websocket::broadcast_started(&ws, total_secs);
                 }
                 tray::update_menu_items(&tray, true, false);
+                work_window.set_running(sequence.lock().unwrap().current_round == RoundType::Work);
             }
 
             TimerEvent::Tick { elapsed_secs, total_secs } => {
@@ -387,6 +414,9 @@ fn listen_events(
                     RoundType::Work => auto_start_work,
                     _ => auto_start_break,
                 };
+                if !continues_running_work(next_round, should_auto) {
+                    work_window.set_running(false);
+                }
                 if should_auto {
                     log::debug!("[timer] auto-starting {}", next_round.as_str());
                     engine.send(TimerCommand::Start);
@@ -416,6 +446,7 @@ fn listen_events(
                 let progress = if total > 0 { elapsed_secs as f32 / total as f32 } else { 0.0 };
                 tray::update_icon(&tray, &rt, true, progress);
                 tray::update_menu_items(&tray, false, true);
+                work_window.set_running(false);
             }
 
             TimerEvent::Resumed { elapsed_secs } => {
@@ -437,6 +468,7 @@ fn listen_events(
                 tray::update_icon(&tray, &rt, false, progress);
                 last_tray_progress = progress;
                 tray::update_menu_items(&tray, true, false);
+                work_window.set_running(sequence.lock().unwrap().current_round == RoundType::Work);
             }
 
             TimerEvent::Reset => {
@@ -472,6 +504,7 @@ fn listen_events(
                 tray::update_icon(&tray, &rt, false, 0.0);
                 last_tray_progress = -1.0;
                 tray::update_menu_items(&tray, false, false);
+                work_window.set_running(false);
             }
 
             TimerEvent::Suspended { elapsed_secs } => {
@@ -491,9 +524,14 @@ fn listen_events(
                 };
                 let progress = if total > 0 { elapsed_secs as f32 / total as f32 } else { 0.0 };
                 tray::update_icon(&tray, &rt, true, progress);
+                work_window.set_running(false);
             }
         }
     }
+}
+
+fn continues_running_work(next_round: RoundType, auto_start: bool) -> bool {
+    next_round == RoundType::Work && auto_start
 }
 
 fn build_snapshot(
@@ -515,5 +553,18 @@ fn build_snapshot(
         work_round_number: seq.work_round_number,
         work_rounds_total: seq.work_rounds_total,
         session_work_count: seq.session_work_count,
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn only_auto_started_work_avoids_restoring_between_rounds() {
+        for round in [RoundType::Work, RoundType::ShortBreak, RoundType::LongBreak] {
+            assert!(!continues_running_work(round, false));
+            assert_eq!(continues_running_work(round, true), round == RoundType::Work);
+        }
     }
 }

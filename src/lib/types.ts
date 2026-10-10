@@ -29,6 +29,7 @@ export interface Settings {
   tray_icon_enabled: boolean;
   min_to_tray: boolean;
   min_to_tray_on_close: boolean;
+  auto_hide_during_work: boolean;
   notifications_enabled: boolean;
   always_on_top: boolean;
   break_always_on_top: boolean;

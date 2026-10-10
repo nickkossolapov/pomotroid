@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "Desativar sempre visível enquanto uma pausa estiver em andamento.",
   "system_group_tray": "Bandeja do Sistema",
   "system_toggle_show_tray": "Mostrar na Bandeja do Sistema",
+  "system_toggle_auto_hide_work": "Ocultar durante o trabalho",
+  "system_toggle_auto_hide_work_desc": "Ocultar na bandeja enquanto o temporizador de trabalho estiver ativo. Restaurar a janela ao pausar, redefinir ou terminar.",
   "system_toggle_show_tray_desc": "Exibir um ícone persistente na bandeja do sistema.",
   "system_tray_gnome_hint": "No GNOME, ícones na bandeja requerem a extensão AppIndicator. Instale-a pelo seu gerenciador de pacotes (ex. gnome-shell-extension-appindicator) ou em extensions.gnome.org, depois saia e entre novamente.",
   "system_toggle_min_tray": "Minimizar para a Bandeja",

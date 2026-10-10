@@ -1,3 +1,39 @@
+### Requirement: Automatic window visibility during work
+
+When Hide During Work is enabled and the tray icon is available, the main
+window SHALL hide when work starts or resumes, including automatic starts,
+tray controls, and keyboard shortcuts. Hiding SHALL use tray visibility rather
+than taskbar minimization. Restoration SHALL show, unminimize, and focus the
+window without changing its size, maximized state, or fullscreen mode.
+
+#### Scenario: Work stops running
+
+- **WHEN** work pauses, is suspended, completes, is skipped, or is reset
+- **THEN** a window hidden by this feature SHALL be restored
+- **EXCEPT** when completion or skipping immediately auto-starts another work round
+- **AND** starting or resuming a break SHALL NOT hide the window
+
+#### Scenario: Consecutive work rounds
+
+- **WHEN** disabled breaks cause a work round to advance directly to another work round
+- **AND** Auto-start Work is enabled
+- **THEN** the window SHALL remain hidden without a restore/hide flash
+- **WHEN** Auto-start Work is disabled
+- **THEN** the window SHALL be restored while waiting for the next start
+
+#### Scenario: Manual restoration during work
+
+- **WHEN** the user restores the window using the tray during running work
+- **THEN** subsequent timer ticks and unrelated settings changes SHALL NOT hide it again
+- **AND** the next work start or resume SHALL hide it again
+
+#### Scenario: Tray unavailable
+
+- **WHEN** the tray is unavailable, not yet created, or hidden
+- **THEN** work SHALL continue without automatically hiding the window
+- **AND** the failure to auto-hide SHALL be logged
+- **AND** failed window actions SHALL be logged without discarding pending restoration state
+
 ### Requirement: Tray menu exposes timer control actions
 
 The tray context menu SHALL include three timer control items — Toggle (Start/Pause/Resume), Skip, and Reset Round — positioned above the existing Show and Exit items.

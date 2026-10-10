@@ -199,6 +199,12 @@
     />
 
     {#if $settings.tray_icon_enabled}
+      <SettingsToggle
+        label={m.system_toggle_auto_hide_work()}
+        description={m.system_toggle_auto_hide_work_desc()}
+        checked={$settings.auto_hide_during_work}
+        onclick={() => toggle('auto_hide_during_work', $settings.auto_hide_during_work)}
+      />
       <!-- Minimize to Tray is Windows/Linux only: the macOS yellow traffic-light
            button routes to the Dock and cannot be intercepted by the app. -->
       {#if !isMac}

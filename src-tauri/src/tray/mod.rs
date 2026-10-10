@@ -17,6 +17,7 @@
 /// when they are absent, preventing the abort.
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
     image::Image,
@@ -115,6 +116,7 @@ pub struct TrayState {
     pub colors: Mutex<TrayColors>,
     pub countdown_mode: Mutex<bool>,
     pub menu_items: Mutex<Option<TrayMenuItems>>,
+    available: AtomicBool,
 }
 
 impl TrayState {
@@ -124,7 +126,12 @@ impl TrayState {
             colors: Mutex::new(TrayColors::default()),
             countdown_mode: Mutex::new(false),
             menu_items: Mutex::new(None),
+            available: AtomicBool::new(false),
         })
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.available.load(Ordering::Acquire)
     }
 }
 
@@ -209,9 +216,13 @@ pub(crate) fn appindicator_available() -> bool {
 pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
     // Re-show existing icon if present — avoids duplicate OS tray entries.
     {
-        let guard = state.icon.lock().unwrap();
-        if let Some(existing) = guard.as_ref() {
-            let _ = existing.set_visible(true);
+        let existing = state.icon.lock().unwrap().clone();
+        if let Some(existing) = existing {
+            if let Err(e) = existing.set_visible(true) {
+                log::warn!("[tray] failed to show tray icon: {e}");
+                return;
+            }
+            state.available.store(true, Ordering::Release);
             log::info!("[tray] shown (reused existing icon)");
             return;
         }
@@ -292,9 +303,9 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
                         }
                         TrayWindowAction::Restore => {
                             log::debug!("[tray] left-click → show");
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
+                            if let Err(e) = restore_main_window(app) {
+                                log::error!("[tray] failed to restore window: {e}");
+                            }
                         }
                     }
                 }
@@ -319,10 +330,8 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
                 }
                 "show" => {
                     log::info!("[tray] show");
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
+                    if let Err(e) = restore_main_window(app) {
+                        log::error!("[tray] failed to restore window: {e}");
                     }
                 }
                 "exit" => {
@@ -342,6 +351,7 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
                 skip: skip_item,
                 reset_round: reset_item,
             });
+            state.available.store(true, Ordering::Release);
             log::info!("[tray] created");
         }
         Err(e) => log::warn!("[tray] failed to build tray icon: {e}"),
@@ -353,12 +363,23 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
 /// The underlying `TrayIcon` is kept alive so it can be shown again without
 /// allocating a second OS icon.  Dropping the handle is not sufficient to
 /// remove the icon on all platforms; `set_visible(false)` is the reliable path.
-pub fn destroy_tray(state: &Arc<TrayState>) {
-    let guard = state.icon.lock().unwrap();
-    if let Some(existing) = guard.as_ref() {
-        let _ = existing.set_visible(false);
+pub fn destroy_tray(state: &Arc<TrayState>) -> Result<(), String> {
+    let existing = state.icon.lock().unwrap().clone();
+    if let Some(existing) = existing {
+        existing.set_visible(false).map_err(|e| e.to_string())?;
         log::info!("[tray] hidden");
     }
+    state.available.store(false, Ordering::Release);
+    Ok(())
+}
+
+pub fn restore_main_window(app: &AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -371,8 +392,9 @@ pub fn destroy_tray(state: &Arc<TrayState>) {
 /// - `paused`: show pause bars over the progress arc
 /// - `progress`: 0.0 (empty) to 1.0 (full, i.e. elapsed/total)
 pub fn update_icon(state: &Arc<TrayState>, round_type: &str, paused: bool, progress: f32) {
-    let guard = state.icon.lock().unwrap();
-    let Some(tray) = guard.as_ref() else { return };
+    // Native calls may wait on the UI thread, which also removes the tray.
+    let tray = state.icon.lock().unwrap().clone();
+    let Some(tray) = tray else { return };
 
     let colors = state.colors.lock().unwrap().clone();
     let countdown = *state.countdown_mode.lock().unwrap();

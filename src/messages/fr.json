@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "Désactiver toujours au premier plan pendant une pause.",
   "system_group_tray": "Barre des tâches",
   "system_toggle_show_tray": "Afficher dans la barre des tâches",
+  "system_toggle_auto_hide_work": "Masquer pendant le travail",
+  "system_toggle_auto_hide_work_desc": "Masquer dans la zone de notification pendant le travail. Restaurer la fenêtre lors d'une pause, d'une réinitialisation ou à la fin.",
   "system_toggle_show_tray_desc": "Affiche une icône permanente dans la barre des tâches.",
   "system_tray_gnome_hint": "Sous GNOME, les icônes de barre système nécessitent l'extension AppIndicator. Installez-la via votre gestionnaire de paquets (ex. gnome-shell-extension-appindicator) ou depuis extensions.gnome.org, puis déconnectez-vous et reconnectez-vous.",
   "system_toggle_min_tray": "Réduire dans la barre des tâches",

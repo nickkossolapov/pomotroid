@@ -59,6 +59,8 @@
   "system_toggle_break_aot_desc": "Mola çalışırken her zaman üstte özelliğini devre dışı bırak.",
   "system_group_tray": "Sistem Tepsisi",
   "system_toggle_show_tray": "Sistem Tepsisinde Göster",
+  "system_toggle_auto_hide_work": "Çalışırken Gizle",
+  "system_toggle_auto_hide_work_desc": "Çalışma zamanlayıcısı çalışırken tepside gizle. Duraklatıldığında, sıfırlandığında veya bittiğinde pencereyi geri getir.",
   "system_toggle_show_tray_desc": "Sistem tepsisinde kalıcı bir simge görüntüle.",
   "system_tray_gnome_hint": "GNOME'da sistem tepsisi simgeleri AppIndicator eklentisini gerektirir. Paket yöneticinizi kullanarak (ör. gnome-shell-extension-appindicator) veya extensions.gnome.org üzerinden yükleyin, ardından oturumunuzu kapatıp yeniden açın.",
   "system_toggle_min_tray": "Tepsiye Küçült",

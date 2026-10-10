@@ -16,6 +16,7 @@ const defaults: Settings = {
   tray_icon_enabled: false,
   min_to_tray: false,
   min_to_tray_on_close: false,
+  auto_hide_during_work: false,
   notifications_enabled: false,
   always_on_top: false,
   break_always_on_top: false,
