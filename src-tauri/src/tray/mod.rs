@@ -1,12 +1,5 @@
-/// System tray management with dynamic arc icon via tiny-skia.
-///
-/// The tray icon is a 32×32 RGBA image:
-///   - Solid filled background circle in the theme's background color.
-///   - Progress arc from 12 o'clock sweeping clockwise, colored by round type.
-///   - While paused: two vertical bars drawn over the progress arc.
-///
-/// Colors come from the active theme, updated when theme changes.
-/// The tray is created/destroyed when `min_to_tray` setting changes.
+/// System tray management with a progress ring or fixed-width countdown digits.
+/// Ring colors follow the app theme; digits follow the system tray appearance.
 ///
 /// ## Linux / Wayland note
 /// Tauri's tray support on Linux is backed by `libappindicator-sys`, which
@@ -27,14 +20,18 @@ use tauri::{
 };
 
 use crate::timer::TimerController;
+use crate::timer::TimerSnapshot;
 use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
+
+mod display;
+pub mod system_theme;
 
 // ---------------------------------------------------------------------------
 // Theme colors for tray rendering
 // ---------------------------------------------------------------------------
 
 /// Color tokens needed for tray icon rendering.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrayColors {
     pub background: [u8; 4],
     pub focus_round: [u8; 4],
@@ -104,6 +101,7 @@ pub fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
 
 /// Handles to the dynamic timer-control menu items.
 /// Stored in `TrayState` so the timer event thread can update labels/enabled states.
+#[derive(Clone)]
 pub struct TrayMenuItems {
     pub toggle: MenuItem<tauri::Wry>,
     pub skip: MenuItem<tauri::Wry>,
@@ -117,6 +115,11 @@ pub struct TrayState {
     pub countdown_mode: Mutex<bool>,
     pub menu_items: Mutex<Option<TrayMenuItems>>,
     available: AtomicBool,
+    pub show_time: AtomicBool,
+    system_dark: AtomicBool,
+    timer: Mutex<Option<TimerSnapshot>>,
+    rendered: Mutex<Option<display::IconKey>>,
+    last_tooltip: Mutex<String>,
 }
 
 impl TrayState {
@@ -127,7 +130,18 @@ impl TrayState {
             countdown_mode: Mutex::new(false),
             menu_items: Mutex::new(None),
             available: AtomicBool::new(false),
+            show_time: AtomicBool::new(false),
+            system_dark: AtomicBool::new(true),
+            timer: Mutex::new(None),
+            rendered: Mutex::new(None),
+            last_tooltip: Mutex::new(String::new()),
         })
+    }
+
+    pub fn initialize(app: &AppHandle, state: &Arc<TrayState>, snapshot: TimerSnapshot, show_time: bool) {
+        *state.timer.lock().unwrap() = Some(snapshot);
+        state.show_time.store(show_time, Ordering::Release);
+        system_theme::initialize(app, state);
     }
 
     pub fn is_available(&self) -> bool {
@@ -223,6 +237,10 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
                 return;
             }
             state.available.store(true, Ordering::Release);
+            if let Some(timer) = state.timer.lock().unwrap().clone() {
+                update_menu_items(state, timer.is_running, timer.is_paused);
+            }
+            refresh(app, state);
             log::info!("[tray] shown (reused existing icon)");
             return;
         }
@@ -270,18 +288,17 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
         Err(e) => { log::warn!("[tray] menu error: {e}"); return; }
     };
 
-    // Render the initial idle icon using the current state (respects countdown mode
-    // and theme colors already set before create_tray is called).
-    let image = {
-        let colors = state.colors.lock().unwrap().clone();
-        let countdown = *state.countdown_mode.lock().unwrap();
-        let bytes = render_tray_icon_rgba(&colors, false, 0.0, "work", countdown);
-        Image::new_owned(bytes, SIZE, SIZE)
+    let Some(snapshot) = state.timer.lock().unwrap().clone() else {
+        log::error!("[tray] cannot create icon before timer initialization");
+        return;
     };
+    let key = icon_key(state, &snapshot);
+    let image = Image::new_owned(key.render(), SIZE, SIZE);
 
     let tray = TrayIconBuilder::new()
         .icon(image)
-        .tooltip("Pomotroid")
+        .icon_as_template(matches!(key, display::IconKey::Time { .. }))
+        .tooltip(display::tooltip(&snapshot))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray_icon, event| {
@@ -352,6 +369,11 @@ pub fn create_tray(app: &AppHandle, state: &Arc<TrayState>) {
                 reset_round: reset_item,
             });
             state.available.store(true, Ordering::Release);
+            if let Some(timer) = state.timer.lock().unwrap().clone() {
+                update_menu_items(state, timer.is_running, timer.is_paused);
+            }
+            // Creation may have waited for the OS while the timer advanced.
+            refresh(app, state);
             log::info!("[tray] created");
         }
         Err(e) => log::warn!("[tray] failed to build tray icon: {e}"),
@@ -386,22 +408,53 @@ pub fn restore_main_window(app: &AppHandle) -> Result<(), String> {
 // Icon update (called from the timer event listener)
 // ---------------------------------------------------------------------------
 
-/// Re-render and push a new RGBA icon to the tray.
-///
-/// - `round_type`: "work" | "short-break" | "long-break"
-/// - `paused`: show pause bars over the progress arc
-/// - `progress`: 0.0 (empty) to 1.0 (full, i.e. elapsed/total)
-pub fn update_icon(state: &Arc<TrayState>, round_type: &str, paused: bool, progress: f32) {
-    // Native calls may wait on the UI thread, which also removes the tray.
-    let tray = state.icon.lock().unwrap().clone();
-    let Some(tray) = tray else { return };
+pub fn update_timer(app: &AppHandle, state: &Arc<TrayState>, snapshot: TimerSnapshot) {
+    *state.timer.lock().unwrap() = Some(snapshot);
+    refresh(app, state);
+}
 
-    let colors = state.colors.lock().unwrap().clone();
-    let countdown = *state.countdown_mode.lock().unwrap();
-    let bytes = render_tray_icon_rgba(&colors, paused, progress, round_type, countdown);
+fn icon_key(state: &TrayState, timer: &TimerSnapshot) -> display::IconKey {
+    display::IconKey::new(
+        timer,
+        state.show_time.load(Ordering::Acquire),
+        state.system_dark.load(Ordering::Acquire),
+        state.colors.lock().unwrap().clone(),
+        *state.countdown_mode.lock().unwrap(),
+    )
+}
 
-    let image = Image::new_owned(bytes, SIZE, SIZE);
-    let _ = tray.set_icon(Some(image));
+/// Redraw only when the visible glyphs/ring change; keep the tooltip exact every second.
+pub fn refresh(app: &AppHandle, state: &Arc<TrayState>) {
+    let state = Arc::clone(state);
+    if let Err(e) = app.run_on_main_thread(move || {
+        let Some(tray) = state.icon.lock().unwrap().clone() else { return };
+        let Some(timer) = state.timer.lock().unwrap().clone() else { return };
+        let key = icon_key(&state, &timer);
+        let mut rendered = state.rendered.lock().unwrap();
+        if rendered.as_ref() != Some(&key) {
+            #[cfg(target_os = "macos")]
+            if let Err(e) = tray.set_icon_as_template(matches!(key, display::IconKey::Time { .. })) {
+                log::error!("[tray] could not set template rendering: {e}");
+                return;
+            }
+            if let Err(e) = tray.set_icon(Some(Image::new_owned(key.render(), SIZE, SIZE))) {
+                log::error!("[tray] could not update icon: {e}");
+                return;
+            }
+            *rendered = Some(key);
+        }
+        drop(rendered);
+        let tooltip = display::tooltip(&timer);
+        let mut previous = state.last_tooltip.lock().unwrap();
+        if *previous != tooltip {
+            match tray.set_tooltip(Some(&tooltip)) {
+                Ok(()) => *previous = tooltip,
+                Err(e) => log::error!("[tray] could not update countdown tooltip: {e}"),
+            }
+        }
+    }) {
+        log::error!("[tray] could not schedule icon refresh: {e}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -415,8 +468,8 @@ pub fn update_icon(state: &Arc<TrayState>, round_type: &str, paused: bool, progr
 ///
 /// No-op when the tray menu has not been created yet.
 pub fn update_menu_items(state: &Arc<TrayState>, is_running: bool, is_paused: bool) {
-    let guard = state.menu_items.lock().unwrap();
-    let Some(items) = guard.as_ref() else { return };
+    let items = state.menu_items.lock().unwrap().clone();
+    let Some(items) = items else { return };
 
     let toggle_label = if is_running { "Pause" } else if is_paused { "Resume" } else { "Start" };
     let controls_enabled = is_running || is_paused;

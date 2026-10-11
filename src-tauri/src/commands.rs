@@ -124,12 +124,12 @@ pub fn settings_set(
 
     // Keep the timer engine in sync when time-related settings change.
     timer.apply_settings(new_settings.clone());
+    tray::update_timer(&app, &tray_state, timer.get_snapshot());
 
     // Broadcast an updated snapshot so the frontend immediately reflects any
     // changed settings (round count, durations, etc.) regardless of timer
-    // state.  The timer:reset handler only calls timerState.set(), so emitting
-    // while running does not interrupt the countdown; the next timer:tick
-    // event will reconcile total_secs from the engine within one second.
+    // state. Active/paused rounds retain the engine's duration rather than
+    // adopting newly configured durations before the next round.
     app.emit("timer:reset", &timer.get_snapshot()).ok();
 
     // Propagate volume and tick-sound changes to the audio engine (optional state).
@@ -152,15 +152,10 @@ pub fn settings_set(
 
     // Sync tray countdown mode when the dial setting changes, then immediately
     // re-render the icon so it matches the dial without waiting for a timer event.
-    if key == "dial_countdown" {
+    if matches!(key.as_str(), "dial_countdown" | "tray_show_time") {
         *tray_state.countdown_mode.lock().unwrap() = new_settings.dial_countdown;
-        let snap = timer.get_snapshot();
-        let progress = if snap.total_secs > 0 {
-            snap.elapsed_secs as f32 / snap.total_secs as f32
-        } else {
-            0.0
-        };
-        tray::update_icon(&tray_state, &snap.round_type, snap.is_paused, progress);
+        tray_state.show_time.store(new_settings.tray_show_time, std::sync::atomic::Ordering::Release);
+        tray::refresh(&app, &tray_state);
     }
 
     // Update tray icon colors when the active theme changes.
@@ -172,13 +167,7 @@ pub fn settings_set(
         };
         if let Some(theme) = themes::find(&data_dir, tray_theme_name) {
             *tray_state.colors.lock().unwrap() = tray::TrayColors::from_colors_map(&theme.colors);
-            let snap = timer.get_snapshot();
-            let progress = if snap.total_secs > 0 {
-                snap.elapsed_secs as f32 / snap.total_secs as f32
-            } else {
-                0.0
-            };
-            tray::update_icon(&tray_state, &snap.round_type, snap.is_paused, progress);
+            tray::refresh(&app, &tray_state);
         }
     }
 
@@ -260,7 +249,9 @@ pub fn settings_reset_defaults(
     };
 
     timer.apply_settings(new_settings.clone());
+    tray::update_timer(&app, &tray_state, timer.get_snapshot());
     *tray_state.countdown_mode.lock().unwrap() = new_settings.dial_countdown;
+    tray_state.show_time.store(new_settings.tray_show_time, std::sync::atomic::Ordering::Release);
 
     // Broadcast a reset snapshot so the frontend dial and display reflect the
     // restored default durations without requiring the user to manually reset.

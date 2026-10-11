@@ -14,6 +14,7 @@ const defaults: Settings = {
   auto_start_work: false,
   auto_start_break: false,
   tray_icon_enabled: false,
+  tray_show_time: false,
   min_to_tray: false,
   min_to_tray_on_close: false,
   auto_hide_during_work: false,

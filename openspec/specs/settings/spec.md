@@ -1,5 +1,14 @@
 ## ADDED Requirements
 
+### Requirement: Show Remaining Time tray setting
+
+The system SHALL persist `tray_show_time` as a boolean, default `false`.
+Settings → System → System Tray SHALL expose a Show Remaining Time toggle
+when Show in System Tray is enabled. Disabling the toggle SHALL preserve the
+existing progress-ring display, and it SHALL NOT change the main timer dial.
+Migration 8 SHALL seed the setting without overwriting an existing value.
+Reset All Settings SHALL restore the progress-ring default.
+
 ### Requirement: Hide During Work setting
 
 The system SHALL persist `auto_hide_during_work` as a boolean, defaulting to

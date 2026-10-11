@@ -200,6 +200,12 @@
 
     {#if $settings.tray_icon_enabled}
       <SettingsToggle
+        label={m.system_toggle_tray_time()}
+        description={m.system_toggle_tray_time_desc()}
+        checked={$settings.tray_show_time}
+        onclick={() => toggle('tray_show_time', $settings.tray_show_time)}
+      />
+      <SettingsToggle
         label={m.system_toggle_auto_hide_work()}
         description={m.system_toggle_auto_hide_work_desc()}
         checked={$settings.auto_hide_during_work}

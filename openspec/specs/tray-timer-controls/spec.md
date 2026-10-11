@@ -1,3 +1,46 @@
+### Requirement: Fixed-width remaining-time tray display
+
+With Show Remaining Time enabled, the system tray SHALL display Inter Regular
+digits on a transparent, fixed-size icon instead of the progress ring. The
+bundled Google Fonts Inter variable TTF SHALL use its default regular weight
+(400). Its SIL Open Font License and copyright notice SHALL be included in
+the repository and available offline in Settings → About.
+
+Font source: https://github.com/google/fonts/tree/main/ofl/inter.
+Font and license: `src/lib/assets/fonts/Inter.ttf` and `Inter-OFL.txt`.
+
+#### Scenario: Minutes change to seconds
+
+- **WHEN** at least 60 seconds remain
+- **THEN** the icon SHALL display rounded-up minutes with at least two digits
+- **WHEN** fewer than 60 seconds remain
+- **THEN** it SHALL display two-digit seconds without a unit suffix
+- **AND** examples SHALL include `1500 → 25`, `1499 → 25`, `60 → 01`, `59 → 59`, `9 → 09`
+- **AND** all supported timer durations (up to 90 minutes) SHALL retain identical digit cells, baseline, font size, and icon dimensions
+
+#### Scenario: Exact countdown tooltip
+
+- **WHEN** the tray host supports tooltips and the user hovers over the icon
+- **THEN** the tooltip SHALL show the exact remaining `MM:SS` countdown
+- **AND** tooltip updates SHALL occur every tick even when the displayed minutes do not change
+
+#### Scenario: Timer state and settings changes
+
+- **WHEN** the tray is created or re-enabled, including during a running or paused round
+- **THEN** it SHALL display the current timer rather than a zero or hard-coded work round
+- **AND** pause/resume, reset, round changes, appearance changes, and idle duration changes SHALL refresh it
+- **AND** changing configured durations during a running or paused round SHALL NOT alter that round's displayed remaining time
+- **AND** numeric updates SHALL NOT be throttled by percentage progress
+- **AND** paused digits SHALL remain readable with a small indicator below them
+
+#### Scenario: System appearance changes
+
+- **WHEN** the Windows taskbar is dark or light
+- **THEN** digits SHALL be white or black respectively, independently of the app theme
+- **AND** taskbar theme changes SHALL be observed even while paused
+- **AND** macOS SHALL use native template rendering so the menu bar chooses the foreground color
+- **AND** other platforms SHALL follow the reported system theme
+
 ### Requirement: Automatic window visibility during work
 
 When Hide During Work is enabled and the tray icon is available, the main

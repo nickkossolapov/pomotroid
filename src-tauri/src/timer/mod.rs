@@ -33,7 +33,7 @@ pub struct TimerSnapshot {
     pub elapsed_secs: u32,
     pub total_secs: u32,
     pub is_running: bool,
-    /// True if the timer has been started and then paused (elapsed > 0, not running).
+    /// True when paused or suspended, including before the first tick.
     pub is_paused: bool,
     pub work_round_number: u32,
     pub work_rounds_total: u32,
@@ -48,7 +48,9 @@ pub struct TimerSnapshot {
 
 struct TimerShared {
     elapsed_secs: u32,
+    total_secs: u32,
     is_running: bool,
+    is_paused: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +91,9 @@ impl TimerController {
         );
         let shared = Arc::new(Mutex::new(TimerShared {
             elapsed_secs: 0,
+            total_secs: duration,
             is_running: false,
+            is_paused: false,
         }));
 
         // Clone handles for the event-listener thread.
@@ -137,7 +141,7 @@ impl TimerController {
         if s.is_running {
             log::info!("[timer] pause");
             self.engine.send(TimerCommand::Pause);
-        } else if s.elapsed_secs > 0 {
+        } else if s.is_paused {
             log::info!("[timer] resume");
             self.engine.send(TimerCommand::Resume);
         } else {
@@ -184,6 +188,7 @@ impl TimerController {
             let settings = self.settings.lock().unwrap();
             seq.current_duration_secs(&settings)
         };
+        self.shared.lock().unwrap().total_secs = duration;
         self.engine.send(TimerCommand::Reconfigure { duration_secs: duration });
     }
 
@@ -191,16 +196,15 @@ impl TimerController {
 
     pub fn get_snapshot(&self) -> TimerSnapshot {
         let seq = self.sequence.lock().unwrap();
-        let settings = self.settings.lock().unwrap();
         let shared = self.shared.lock().unwrap();
 
         TimerSnapshot {
             round_type: seq.current_round.as_str().to_string(),
             previous_round_type: seq.previous_round.map(|r| r.as_str().to_string()).unwrap_or_default(),
             elapsed_secs: shared.elapsed_secs,
-            total_secs: seq.current_duration_secs(&settings),
+            total_secs: shared.total_secs,
             is_running: shared.is_running,
-            is_paused: !shared.is_running && shared.elapsed_secs > 0,
+            is_paused: shared.is_paused,
             work_round_number: seq.work_round_number,
             work_rounds_total: seq.work_rounds_total,
             session_work_count: seq.session_work_count,
@@ -227,7 +231,7 @@ impl TimerController {
             changed
         };
         let s = self.shared.lock().unwrap();
-        let is_idle = !s.is_running && s.elapsed_secs == 0;
+        let is_idle = !s.is_running && !s.is_paused;
         drop(s);
         if is_idle {
             self.reconfigure();
@@ -263,8 +267,6 @@ fn listen_events(
     ctx: ListenContext,
 ) {
     let ListenContext { sequence, settings, shared, engine, tray, db, work_window } = ctx;
-    // Track last tray progress to throttle redraws to ≥ 1% delta.
-    let mut last_tray_progress: f32 = -1.0;
     // Active session row ID for recording (None = not started yet).
     let mut current_session_id: Option<i64> = None;
 
@@ -272,7 +274,13 @@ fn listen_events(
         match event {
             TimerEvent::Started { total_secs } => {
                 log::info!("[timer] started total={total_secs}s");
-                shared.lock().unwrap().is_running = true;
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.is_running = true;
+                    s.is_paused = false;
+                    s.elapsed_secs = 0;
+                    s.total_secs = total_secs;
+                }
                 let _ = app.emit("timer:started", serde_json::json!({ "total_secs": total_secs }));
                 if let Some(ws) = app.try_state::<Arc<WsState>>() {
                     websocket::broadcast_started(&ws, total_secs);
@@ -285,7 +293,9 @@ fn listen_events(
                 {
                     let mut s = shared.lock().unwrap();
                     s.elapsed_secs = elapsed_secs;
+                    s.total_secs = total_secs;
                     s.is_running = true;
+                    s.is_paused = false;
                 }
                 let _ = app.emit(
                     "timer:tick",
@@ -316,16 +326,6 @@ fn listen_events(
                     }
                 }
 
-                // Update tray arc — throttle to 1% visual change.
-                let progress = if total_secs > 0 {
-                    elapsed_secs as f32 / total_secs as f32
-                } else {
-                    0.0
-                };
-                if (progress - last_tray_progress).abs() >= 0.01 {
-                    tray::update_icon(&tray, &rt, false, progress);
-                    last_tray_progress = progress;
-                }
             }
 
             TimerEvent::Complete { skipped: was_skipped } => {
@@ -353,7 +353,9 @@ fn listen_events(
                 {
                     let mut s = shared.lock().unwrap();
                     s.elapsed_secs = 0;
+                    s.total_secs = next_duration;
                     s.is_running = false;
+                    s.is_paused = false;
                 }
 
                 // Arm the next round's duration without risking a late
@@ -363,7 +365,7 @@ fn listen_events(
                 });
 
                 // Emit round-change with the new snapshot.
-                let snapshot = build_snapshot(&sequence, &settings, &shared);
+                let snapshot = build_snapshot(&sequence, &shared);
                 let _ = app.emit("timer:round-change", snapshot);
 
                 // Desktop notifications are dispatched by the frontend via the
@@ -394,18 +396,9 @@ fn listen_events(
                     }
                 }
 
-                // Update tray to reflect new round type and reset progress.
-                // Use -1.0 (same as initialisation and Reset) so the very
-                // first tick of the new round always passes the ≥1% threshold,
-                // regardless of how long the round is.  Using 0.0 here caused
-                // a ≥15-second blank period before the arc started animating.
-                let rt = sequence.lock().unwrap().current_round.as_str().to_string();
-                tray::update_icon(&tray, &rt, false, 0.0);
-                last_tray_progress = -1.0;
-
                 // Broadcast round-change to any connected WebSocket clients.
                 if let Some(ws) = app.try_state::<Arc<WsState>>() {
-                    let snap = build_snapshot(&sequence, &settings, &shared);
+                    let snap = build_snapshot(&sequence, &shared);
                     websocket::broadcast_round_change(&ws, snap);
                 }
 
@@ -430,43 +423,34 @@ fn listen_events(
 
             TimerEvent::Paused { elapsed_secs } => {
                 log::info!("[timer] paused elapsed={elapsed_secs}s");
-                shared.lock().unwrap().is_running = false;
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.is_running = false;
+                    s.is_paused = true;
+                    s.elapsed_secs = elapsed_secs;
+                }
                 let _ = app.emit("timer:paused", serde_json::json!({ "elapsed_secs": elapsed_secs }));
                 if let Some(ws) = app.try_state::<Arc<WsState>>() {
                     websocket::broadcast_paused(&ws, elapsed_secs);
                 }
 
-                // Show pause bars in tray.
-                let rt = sequence.lock().unwrap().current_round.as_str().to_string();
-                let total = {
-                    let seq = sequence.lock().unwrap();
-                    let s = settings.lock().unwrap();
-                    seq.current_duration_secs(&s)
-                };
-                let progress = if total > 0 { elapsed_secs as f32 / total as f32 } else { 0.0 };
-                tray::update_icon(&tray, &rt, true, progress);
                 tray::update_menu_items(&tray, false, true);
                 work_window.set_running(false);
             }
 
             TimerEvent::Resumed { elapsed_secs } => {
                 log::info!("[timer] resumed elapsed={elapsed_secs}s");
-                shared.lock().unwrap().is_running = true;
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.is_running = true;
+                    s.is_paused = false;
+                    s.elapsed_secs = elapsed_secs;
+                }
                 let _ = app.emit("timer:resumed", serde_json::json!({ "elapsed_secs": elapsed_secs }));
                 if let Some(ws) = app.try_state::<Arc<WsState>>() {
                     websocket::broadcast_resumed(&ws, elapsed_secs);
                 }
 
-                // Restore arc in tray.
-                let rt = sequence.lock().unwrap().current_round.as_str().to_string();
-                let total = {
-                    let seq = sequence.lock().unwrap();
-                    let s = settings.lock().unwrap();
-                    seq.current_duration_secs(&s)
-                };
-                let progress = if total > 0 { elapsed_secs as f32 / total as f32 } else { 0.0 };
-                tray::update_icon(&tray, &rt, false, progress);
-                last_tray_progress = progress;
                 tray::update_menu_items(&tray, true, false);
                 work_window.set_running(sequence.lock().unwrap().current_round == RoundType::Work);
             }
@@ -476,12 +460,19 @@ fn listen_events(
                 // Abandon the active session (leave DB row as-is).
                 current_session_id = None;
 
+                let duration = {
+                    let seq = sequence.lock().unwrap();
+                    let s = settings.lock().unwrap();
+                    seq.current_duration_secs(&s)
+                };
                 {
                     let mut s = shared.lock().unwrap();
                     s.elapsed_secs = 0;
+                    s.total_secs = duration;
                     s.is_running = false;
+                    s.is_paused = false;
                 }
-                let snapshot = build_snapshot(&sequence, &settings, &shared);
+                let snapshot = build_snapshot(&sequence, &shared);
                 let _ = app.emit("timer:reset", snapshot);
                 if let Some(ws) = app.try_state::<Arc<WsState>>() {
                     websocket::broadcast_reset(&ws);
@@ -492,41 +483,30 @@ fn listen_events(
                 // total. Using the lighter-weight command here avoids a race
                 // where a fast user click on Start is immediately clobbered by
                 // a late follow-up duration update.
-                let duration = {
-                    let seq = sequence.lock().unwrap();
-                    let s = settings.lock().unwrap();
-                    seq.current_duration_secs(&s)
-                };
                 engine.send(TimerCommand::Prime { duration_secs: duration });
 
-                // Reset tray to idle (empty arc).
-                let rt = sequence.lock().unwrap().current_round.as_str().to_string();
-                tray::update_icon(&tray, &rt, false, 0.0);
-                last_tray_progress = -1.0;
                 tray::update_menu_items(&tray, false, false);
                 work_window.set_running(false);
             }
 
             TimerEvent::Suspended { elapsed_secs } => {
                 log::info!("[timer] suspended by system elapsed={elapsed_secs}s");
-                shared.lock().unwrap().is_running = false;
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.is_running = false;
+                    s.is_paused = true;
+                    s.elapsed_secs = elapsed_secs;
+                }
                 let _ = app.emit(
                     "timer:suspended",
                     serde_json::json!({ "elapsed_secs": elapsed_secs }),
                 );
 
-                // Show pause bars while suspended.
-                let rt = sequence.lock().unwrap().current_round.as_str().to_string();
-                let total = {
-                    let seq = sequence.lock().unwrap();
-                    let s = settings.lock().unwrap();
-                    seq.current_duration_secs(&s)
-                };
-                let progress = if total > 0 { elapsed_secs as f32 / total as f32 } else { 0.0 };
-                tray::update_icon(&tray, &rt, true, progress);
+                tray::update_menu_items(&tray, false, true);
                 work_window.set_running(false);
             }
         }
+        tray::update_timer(&app, &tray, build_snapshot(&sequence, &shared));
     }
 }
 
@@ -536,20 +516,18 @@ fn continues_running_work(next_round: RoundType, auto_start: bool) -> bool {
 
 fn build_snapshot(
     sequence: &Arc<Mutex<SequenceState>>,
-    settings: &Arc<Mutex<Settings>>,
     shared: &Arc<Mutex<TimerShared>>,
 ) -> TimerSnapshot {
     let seq = sequence.lock().unwrap();
-    let s = settings.lock().unwrap();
     let sh = shared.lock().unwrap();
 
     TimerSnapshot {
         round_type: seq.current_round.as_str().to_string(),
         previous_round_type: seq.previous_round.map(|r| r.as_str().to_string()).unwrap_or_default(),
         elapsed_secs: sh.elapsed_secs,
-        total_secs: seq.current_duration_secs(&s),
+        total_secs: sh.total_secs,
         is_running: sh.is_running,
-        is_paused: !sh.is_running && sh.elapsed_secs > 0,
+        is_paused: sh.is_paused,
         work_round_number: seq.work_round_number,
         work_rounds_total: seq.work_rounds_total,
         session_work_count: seq.session_work_count,
@@ -565,6 +543,21 @@ mod window_tests {
         for round in [RoundType::Work, RoundType::ShortBreak, RoundType::LongBreak] {
             assert!(!continues_running_work(round, false));
             assert_eq!(continues_running_work(round, true), round == RoundType::Work);
+        }
+
+        #[test]
+        fn snapshot_uses_engine_duration_and_preserves_pause_before_first_tick() {
+            let sequence = Arc::new(Mutex::new(SequenceState::new(4)));
+            let shared = Arc::new(Mutex::new(TimerShared {
+                elapsed_secs: 0,
+                total_secs: 90,
+                is_running: false,
+                is_paused: true,
+            }));
+            let snapshot = build_snapshot(&sequence, &shared);
+            assert_eq!(snapshot.total_secs, 90);
+            assert!(snapshot.is_paused);
+            assert!(!snapshot.is_running);
         }
     }
 }

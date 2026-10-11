@@ -17,6 +17,7 @@ pub struct Settings {
     pub auto_start_work: bool,
     pub auto_start_break: bool,
     pub tray_icon_enabled: bool,
+    pub tray_show_time: bool,
     pub min_to_tray: bool,
     pub min_to_tray_on_close: bool,
     pub auto_hide_during_work: bool,
@@ -76,6 +77,7 @@ impl Default for Settings {
             auto_start_work: true,
             auto_start_break: true,
             tray_icon_enabled: false,
+            tray_show_time: false,
             min_to_tray: false,
             min_to_tray_on_close: false,
             auto_hide_during_work: false,
@@ -186,6 +188,7 @@ pub fn load(conn: &Connection) -> Result<Settings> {
         auto_start_work: parse_bool(&map, "auto_start_work", d.auto_start_work),
         auto_start_break: parse_bool(&map, "auto_start_break", d.auto_start_break),
         tray_icon_enabled: parse_bool(&map, "tray_icon_enabled", d.tray_icon_enabled),
+        tray_show_time: parse_bool(&map, "tray_show_time", d.tray_show_time),
         min_to_tray: parse_bool(&map, "min_to_tray", d.min_to_tray),
         min_to_tray_on_close: parse_bool(&map, "min_to_tray_on_close", d.min_to_tray_on_close),
         auto_hide_during_work: parse_bool(&map, "auto_hide_during_work", d.auto_hide_during_work),
@@ -346,6 +349,7 @@ mod tests {
         assert_eq!(s.language, "auto");
         assert!(!s.verbose_logging);
         assert!(!s.auto_hide_during_work);
+        assert!(!s.tray_show_time);
     }
 
     #[test]
@@ -375,6 +379,15 @@ mod tests {
         save_setting(&conn, "auto_hide_during_work", "true").unwrap();
         seed_defaults(&conn).unwrap();
         assert!(load(&conn).unwrap().auto_hide_during_work);
+    }
+
+    #[test]
+    fn tray_show_time_round_trip() {
+        let conn = setup();
+        seed_defaults(&conn).unwrap();
+        save_setting(&conn, "tray_show_time", "true").unwrap();
+        seed_defaults(&conn).unwrap();
+        assert!(load(&conn).unwrap().tray_show_time);
     }
 
     #[test]
@@ -424,6 +437,7 @@ mod tests {
 
         // Simulate the reset_defaults command: wipe all rows then re-seed.
         save_setting(&conn, "auto_hide_during_work", "true").unwrap();
+        save_setting(&conn, "tray_show_time", "true").unwrap();
         conn.execute("DELETE FROM settings", []).unwrap();
         seed_defaults(&conn).unwrap();
 
@@ -435,6 +449,7 @@ mod tests {
         // Non-timer settings are also wiped and reseeded to their defaults.
         assert!(!s.always_on_top, "always_on_top must reset to default false");
         assert!(!s.auto_hide_during_work);
+        assert!(!s.tray_show_time);
     }
 
     #[test]

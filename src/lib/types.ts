@@ -27,6 +27,7 @@ export interface Settings {
   auto_start_work: boolean;
   auto_start_break: boolean;
   tray_icon_enabled: boolean;
+  tray_show_time: boolean;
   min_to_tray: boolean;
   min_to_tray_on_close: boolean;
   auto_hide_during_work: boolean;

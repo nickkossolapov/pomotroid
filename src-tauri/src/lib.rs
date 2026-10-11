@@ -136,6 +136,12 @@ pub fn run() {
                 Arc::clone(&tray_state),
                 db.clone(),
             );
+            tray::TrayState::initialize(
+                app.handle(),
+                &tray_state,
+                timer.get_snapshot(),
+                initial_settings.tray_show_time,
+            );
             app.manage(timer);
 
             // Create initial tray icon if tray_icon_enabled is on, or if an
@@ -323,6 +329,10 @@ pub fn run() {
             let win_for_pos = main_window.clone();
             main_window.on_window_event(move |event| {
                 match event {
+                    tauri::WindowEvent::ThemeChanged(theme) => {
+                        let state = app_for_close.state::<Arc<tray::TrayState>>();
+                        tray::system_theme::changed(&app_for_close, &state, *theme);
+                    }
                     tauri::WindowEvent::CloseRequested { api, .. } => {
                         let hide = db_for_close
                             .lock()

@@ -39,6 +39,7 @@ futures-util = "0.3"
 rodio = { version = "0.22", default-features = false, features = ["playback", "wav", "mp3", "vorbis"] }
 symphonia-codec-adpcm = "0.6.0"
 tiny-skia = "0.12"
+ab_glyph = "0.2"
 notify = "8"
 
 [dev-dependencies]
@@ -47,3 +48,7 @@ tokio-tungstenite = "0.29"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }

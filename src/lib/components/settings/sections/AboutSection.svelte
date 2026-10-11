@@ -7,6 +7,7 @@
   import { settings } from '$lib/stores/settings';
   import type { UpdateInfo } from '$lib/types';
   import * as m from '$paraglide/messages.js';
+  import interLicense from '$lib/assets/fonts/Inter-OFL.txt?raw';
 
   const BASE_VERSION = '1.0.0';
   const REPO = 'https://github.com/Splode/pomotroid';
@@ -164,9 +165,28 @@
     Built with Tauri, Svelte, and Rust.<br />
     MIT License — Copyright &copy; 2017–2026 Christopher Murphy.
   </p>
+  <details class="font-license">
+    <summary>{m.about_font_license()}</summary>
+    <pre>{interLicense}</pre>
+  </details>
 </div>
 
 <style>
+  .font-license {
+    font-size: 0.75rem;
+    color: var(--color-foreground);
+  }
+
+  .font-license summary {
+    cursor: pointer;
+  }
+
+  .font-license pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin-top: 12px;
+  }
+
   .section {
     display: flex;
     flex-direction: column;
